@@ -1,0 +1,6 @@
+{
+  "name": "Keep-it (킵잇)",
+  "description": "내 또래가 먹는 영양제 추천부터 3초 컷 루틴 체크까지 — 복잡함을 걷어낸 초경량 맞춤형 영양제 관리 웹앱",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
