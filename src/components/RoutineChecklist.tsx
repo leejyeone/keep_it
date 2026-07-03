@@ -7,6 +7,7 @@ interface RoutineChecklistProps {
   onToggleCheck: (routineId: string) => void;
   onRemoveRoutine: (routineId: string) => void;
   onOpenAddModal: () => void;
+  selectedDateKey?: string;
 }
 
 export default function RoutineChecklist({
@@ -14,7 +15,8 @@ export default function RoutineChecklist({
   todayRecord,
   onToggleCheck,
   onRemoveRoutine,
-  onOpenAddModal
+  onOpenAddModal,
+  selectedDateKey
 }: RoutineChecklistProps) {
 
   // Group routines by time of day
@@ -44,6 +46,35 @@ export default function RoutineChecklist({
     }
   };
 
+  const getHeaderTitle = () => {
+    if (!selectedDateKey) return '오늘의 영양제 체크리스트';
+    const d = new Date();
+    const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    
+    if (selectedDateKey === todayStr) {
+      return '오늘의 영양제 체크리스트';
+    }
+    
+    const selected = new Date(selectedDateKey);
+    const diffTime = new Date().setHours(0,0,0,0) - selected.setHours(0,0,0,0);
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 1) return '어제의 영양제 체크리스트';
+    if (diffDays === 2) return '그저께의 영양제 체크리스트';
+    return `${selected.getMonth() + 1}월 ${selected.getDate()}일 영양제 체크리스트`;
+  };
+
+  const getHeaderDesc = () => {
+    if (!selectedDateKey) return '오늘 섭취한 영양제를 누르면 3초 만에 기록이 완료됩니다.';
+    const d = new Date();
+    const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    
+    if (selectedDateKey === todayStr) {
+      return '오늘 섭취한 영양제를 누르면 3초 만에 기록이 완료됩니다.';
+    }
+    return '해당 날짜에 복용한 영양제를 체크하여 지난 기록을 자유롭게 입력하고 수정하세요.';
+  };
+
   const hasRoutines = routines.length > 0;
 
   return (
@@ -51,8 +82,8 @@ export default function RoutineChecklist({
       {/* Header and Add button */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">오늘의 영양제 체크리스트</h3>
-          <p className="text-xs text-gray-500 mt-1">오늘 섭취한 영양제를 누르면 3초 만에 기록이 완료됩니다.</p>
+          <h3 className="text-sm font-bold text-emerald-800 uppercase tracking-wider">{getHeaderTitle()}</h3>
+          <p className="text-xs text-gray-400 mt-1">{getHeaderDesc()}</p>
         </div>
         
         <button

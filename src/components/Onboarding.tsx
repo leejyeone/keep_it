@@ -93,7 +93,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                   setGender('M');
                   setError('');
                 }}
-                className={`py-4 px-6 rounded-2xl border text-sm font-semibold transition-all flex flex-col items-center gap-2 ${
+                className={`py-4 px-6 rounded-2xl border text-sm font-semibold transition-all flex flex-col items-center gap-2 relative ${
                   gender === 'M'
                     ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 shadow-sm shadow-emerald-100'
                     : 'border-gray-100 bg-gray-50/50 text-gray-600 hover:border-gray-200 hover:bg-gray-50'
@@ -140,13 +140,14 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             <div className="relative">
               <input
                 id="input-age"
-                type="number"
-                min="1"
-                max="120"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="예: 27"
                 value={age}
                 onChange={(e) => {
-                  setAge(e.target.value);
+                  const filteredVal = e.target.value.replace(/[^0-9]/g, '');
+                  setAge(filteredVal);
                   setError('');
                 }}
                 className="w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-sm font-medium"

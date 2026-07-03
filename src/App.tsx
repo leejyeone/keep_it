@@ -25,6 +25,7 @@ export default function App() {
   const [routines, setRoutines] = useState<RoutineItem[]>([]);
   const [historyLog, setHistoryLog] = useState<HistoryLog>({});
   const [recommendations, setRecommendations] = useState<Supplement[]>([]);
+  const [selectedDateKey, setSelectedDateKey] = useState<string>('');
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEncouragementOpen, setIsEncouragementOpen] = useState(false);
@@ -35,6 +36,12 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [supabaseConfigured, setSupabaseConfigured] = useState(false);
   const [isInitialLoaded, setIsInitialLoaded] = useState(false);
+
+  // Supabase Diagnostics and Tables Check
+  const [supabaseSchemaStatus, setSupabaseSchemaStatus] = useState<'healthy' | 'schema_mismatch' | 'unknown'>('unknown');
+  const [supabaseMissingTables, setSupabaseMissingTables] = useState<string[]>([]);
+  const [supabaseSyncErrors, setSupabaseSyncErrors] = useState<any>(null);
+  const [showSupabaseGuide, setShowSupabaseGuide] = useState(false);
 
   // --- Dynamic recommendations fetching from Gemini API ---
   const fetchGeminiRecommendations = async (gender: 'M' | 'F', age: number) => {
@@ -84,6 +91,31 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         console.log("Supabase synced successfully.");
+        setSupabaseSyncErrors(null);
+        setSupabaseSchemaStatus('healthy');
+        setSupabaseMissingTables([]);
+      } else {
+        console.warn("Supabase sync had issues:", data.errors);
+        setSupabaseSyncErrors(data.errors);
+        setSupabaseSchemaStatus('schema_mismatch');
+        
+        // Infer missing tables from error message or keys
+        const missing: string[] = [];
+        if (data.errors) {
+          const errMsg = JSON.stringify(data.errors).toLowerCase();
+          if (errMsg.includes('profiles') || errMsg.includes('relation "profiles" does not exist')) {
+            missing.push('profiles');
+          }
+          if (errMsg.includes('supplements') || errMsg.includes('relation "supplements" does not exist')) {
+            missing.push('supplements');
+          }
+          if (errMsg.includes('user_routines') || errMsg.includes('relation "user_routines" does not exist')) {
+            missing.push('user_routines');
+          }
+        }
+        if (missing.length > 0) {
+          setSupabaseMissingTables(prev => Array.from(new Set([...prev, ...missing])));
+        }
       }
     } catch (error) {
       console.error("Supabase sync failed:", error);
@@ -111,6 +143,10 @@ export default function App() {
           const configData = await configRes.json();
           isConfigured = !!configData.supabaseConfigured;
           setSupabaseConfigured(isConfigured);
+          if (configData.schema) {
+            setSupabaseSchemaStatus(configData.schema.status || 'unknown');
+            setSupabaseMissingTables(configData.schema.missingTables || []);
+          }
         } catch (e) {
           console.warn("Could not retrieve config from Express server:", e);
         }
@@ -155,6 +191,9 @@ export default function App() {
         }
 
         // Apply loaded states
+        const todayStr = getTodayKey();
+        setSelectedDateKey(todayStr);
+
         if (initialProfile) {
           setProfile(initialProfile);
           // Load recommendations
@@ -200,8 +239,8 @@ export default function App() {
     return `${year}-${month}-${day}`;
   };
 
-  const todayKey = getTodayKey();
-  const todayRecord: DailyRecord = historyLog[todayKey] || {};
+  const activeDateKey = selectedDateKey || getTodayKey();
+  const selectedRecord: DailyRecord = historyLog[activeDateKey] || {};
 
   // --- Logic helpers ---
   const generateId = (): string => {
@@ -210,7 +249,7 @@ export default function App() {
 
   const getCompletionRate = (): number => {
     if (routines.length === 0) return 0;
-    const checkedCount = routines.filter(r => todayRecord[r.id]).length;
+    const checkedCount = routines.filter(r => selectedRecord[r.id]).length;
     return Math.round((checkedCount / routines.length) * 100);
   };
 
@@ -262,25 +301,27 @@ export default function App() {
     localStorage.setItem('keepit_routines', JSON.stringify(initialRoutines));
     
     // Clear today's check record for fresh state
+    const todayKey = getTodayKey();
     const updatedHistory = { ...historyLog, [todayKey]: {} };
     setHistoryLog(updatedHistory);
     localStorage.setItem('keepit_history', JSON.stringify(updatedHistory));
+    setSelectedDateKey(todayKey);
 
     // Fetch dynamic, highly personalized recommendations from Gemini API
     await fetchGeminiRecommendations(newProfile.gender, newProfile.age);
   };
 
   const handleToggleCheck = (routineId: string) => {
-    const isChecked = !todayRecord[routineId];
+    const isChecked = !selectedRecord[routineId];
     
     const updatedRecord = {
-      ...todayRecord,
+      ...selectedRecord,
       [routineId]: isChecked
     };
 
     const updatedHistory = {
       ...historyLog,
-      [todayKey]: updatedRecord
+      [activeDateKey]: updatedRecord
     };
 
     setHistoryLog(updatedHistory);
@@ -330,12 +371,12 @@ export default function App() {
     setRoutines(updated);
 
     // Clean up record of the deleted item
-    const updatedRecord = { ...todayRecord };
+    const updatedRecord = { ...selectedRecord };
     delete updatedRecord[routineId];
     
     const updatedHistory = {
       ...historyLog,
-      [todayKey]: updatedRecord
+      [activeDateKey]: updatedRecord
     };
     setHistoryLog(updatedHistory);
   };
@@ -412,8 +453,120 @@ export default function App() {
         />
 
         <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+          {/* Supabase Diagnostics Panel */}
+          {supabaseConfigured && (
+            <div className={`border rounded-3xl p-5 transition-all ${
+              supabaseSchemaStatus === 'schema_mismatch' || supabaseMissingTables.length > 0 || supabaseSyncErrors
+                ? 'bg-amber-50/40 border-amber-200/80 shadow-sm shadow-amber-50'
+                : 'bg-emerald-50/20 border-emerald-100 shadow-sm shadow-emerald-50/50'
+            }`}>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-xl mt-0.5">
+                    {supabaseSchemaStatus === 'schema_mismatch' || supabaseMissingTables.length > 0 || supabaseSyncErrors ? '⚠️' : '☁️'}
+                  </span>
+                  <div>
+                    <h4 className="text-xs font-black text-gray-800 flex items-center gap-1.5">
+                      Supabase 클라우드 동기화 상태 진단
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                        supabaseSchemaStatus === 'schema_mismatch' || supabaseMissingTables.length > 0 || supabaseSyncErrors
+                          ? 'bg-amber-100 text-amber-800 border-amber-200'
+                          : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      }`}>
+                        {supabaseSchemaStatus === 'schema_mismatch' || supabaseMissingTables.length > 0 || supabaseSyncErrors
+                          ? '설정 필요 (테이블 미생성)'
+                          : '동기화 활성화됨 (연결 정상)'}
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-gray-500 font-medium mt-1">
+                      {supabaseSchemaStatus === 'schema_mismatch' || supabaseMissingTables.length > 0 || supabaseSyncErrors
+                        ? `Supabase 연결은 되었으나 필수 테이블이 데이터베이스에 존재하지 않습니다 (${supabaseMissingTables.join(', ') || '확인 필요'}).`
+                        : 'Supabase 데이터베이스와 실시간으로 연동되어 모든 기기에서 복용 기록이 자동 저장됩니다.'}
+                    </p>
+                  </div>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => setShowSupabaseGuide(!showSupabaseGuide)}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all ${
+                    supabaseSchemaStatus === 'schema_mismatch' || supabaseMissingTables.length > 0 || supabaseSyncErrors
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-transparent'
+                      : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-200'
+                  }`}
+                >
+                  {showSupabaseGuide ? '가이드 닫기' : 'SQL 테이블 가이드 보기'}
+                </button>
+              </div>
+
+              {/* Collapsible Supabase Guide */}
+              {showSupabaseGuide && (
+                <div className="mt-5 pt-4 border-t border-dashed border-gray-200 space-y-4">
+                  <div className="p-3 bg-gray-900 rounded-2xl text-left font-mono text-[10px] text-gray-300 space-y-2">
+                    <p className="text-emerald-400 font-bold border-b border-gray-800 pb-1.5"># Supabase SQL Editor에 아래 쿼리를 전체 복사하여 붙여넣고 실행(Run)하세요:</p>
+                    <pre className="overflow-x-auto whitespace-pre leading-relaxed select-all">
+{`-- 1. profiles 테이블 생성
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id text PRIMARY KEY,
+  gender text NOT NULL,
+  age integer,
+  age_group text,
+  name text,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 2. supplements 테이블 생성
+CREATE TABLE IF NOT EXISTS public.supplements (
+  id bigint PRIMARY KEY,
+  name text NOT NULL,
+  target_group text,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 3. user_routines 테이블 생성
+CREATE TABLE IF NOT EXISTS public.user_routines (
+  id bigint PRIMARY KEY,
+  user_id text REFERENCES public.profiles(id) ON DELETE CASCADE,
+  supplement_id bigint REFERENCES public.supplements(id) ON DELETE CASCADE,
+  is_checked boolean DEFAULT false NOT NULL,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- RLS (Row Level Security) 설정 해제 또는 전체 접근 허용 정책 수립
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_routines ENABLE ROW LEVEL SECURITY;
+
+-- 익명/인증 접근 허용 정책 추가
+CREATE POLICY "Allow public read profiles" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "Allow public insert profiles" ON public.profiles FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update profiles" ON public.profiles FOR UPDATE USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow public read supplements" ON public.supplements FOR SELECT USING (true);
+CREATE POLICY "Allow public insert supplements" ON public.supplements FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update supplements" ON public.supplements FOR UPDATE USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow public read user_routines" ON public.user_routines FOR SELECT USING (true);
+CREATE POLICY "Allow public insert user_routines" ON public.user_routines FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public update user_routines" ON public.user_routines FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public delete user_routines" ON public.user_routines FOR DELETE USING (true);`}
+                    </pre>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-gray-500 font-semibold bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    💡 <strong>Tip:</strong> 테이블 생성 쿼리를 실행한 후 페이지를 새로고침하거나 영양제를 체크하면 즉시 Supabase 클라우드에 성공적으로 자동 저장되기 시작합니다!
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Calendar Streak Tracker */}
-          <StreakCalendar historyLog={historyLog} routines={routines} />
+          <StreakCalendar 
+            historyLog={historyLog} 
+            routines={routines} 
+            selectedDateKey={activeDateKey}
+            onSelectDate={setSelectedDateKey}
+          />
 
           {/* Recommendations Header & Quick Action */}
           <section className="space-y-4">
@@ -460,10 +613,11 @@ export default function App() {
           <section>
             <RoutineChecklist
               routines={routines}
-              todayRecord={todayRecord}
+              todayRecord={selectedRecord}
               onToggleCheck={handleToggleCheck}
               onRemoveRoutine={handleRemoveRoutine}
               onOpenAddModal={() => setIsAddModalOpen(true)}
+              selectedDateKey={activeDateKey}
             />
           </section>
         </main>

@@ -49,13 +49,56 @@ if (isSupabaseConfigured) {
   console.log("Supabase is not configured yet. Falling back to LocalStorage persistence.");
 }
 
+// Helper to check Supabase table schemas dynamically
+async function checkSupabaseSchema() {
+  if (!supabase) return { status: 'disconnected', details: 'Supabase is not initialized' };
+  
+  const tables = ['profiles', 'supplements', 'user_routines'];
+  const missingTables: string[] = [];
+  const errors: Record<string, any> = {};
+
+  for (const table of tables) {
+    try {
+      const { error } = await supabase.from(table).select('*').limit(1);
+      if (error) {
+        // PGRST116 means empty/no rows found but table exists
+        // 42P01 means relation does not exist
+        if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('relation')) {
+          missingTables.push(table);
+        } else if (error.code !== 'PGRST116') {
+          errors[table] = { code: error.code, message: error.message };
+        }
+      }
+    } catch (e: any) {
+      errors[table] = { message: e.message };
+    }
+  }
+
+  return {
+    status: missingTables.length === 0 ? 'healthy' : 'schema_mismatch',
+    missingTables,
+    errors
+  };
+}
+
 // --- API Endpoints ---
 
 // Get Configuration Status
-app.get("/api/config", (req, res) => {
+app.get("/api/config", async (req, res) => {
+  if (!isSupabaseConfigured) {
+    return res.json({
+      supabaseConfigured: false,
+      supabaseUrl: null,
+      status: 'not_configured'
+    });
+  }
+
+  const schemaCheck = await checkSupabaseSchema();
+
   res.json({
-    supabaseConfigured: isSupabaseConfigured,
-    supabaseUrl: isSupabaseConfigured ? supabaseUrl.substring(0, 15) + "..." : null
+    supabaseConfigured: true,
+    supabaseUrl: supabaseUrl.substring(0, 15) + "...",
+    schema: schemaCheck
   });
 });
 
@@ -195,7 +238,23 @@ app.post("/api/sync/save", async (req, res) => {
       }
     }
 
-    res.json({ success: true, message: "Supabase sync successfully executed." });
+    // Gather errors if any occurred to return structured feedback to the frontend
+    const syncErrors: Record<string, any> = {};
+    if (profileError) syncErrors.profiles = profileError;
+    if (routines && routines.length > 0) {
+      // We can check if any error happened in the routines sync steps
+    }
+
+    const hasAnyError = Object.keys(syncErrors).length > 0 || !!profileError;
+
+    res.json({ 
+      success: !hasAnyError, 
+      message: hasAnyError ? "Supabase sync had some issues." : "Supabase sync successfully executed.",
+      errors: hasAnyError ? {
+        profiles: profileError,
+        ...syncErrors
+      } : null
+    });
 
   } catch (error: any) {
     console.error("Supabase sync failed:", error);
